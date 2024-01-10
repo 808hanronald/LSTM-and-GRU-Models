@@ -212,3 +212,123 @@ def get_true_pred_labels(model,ds):
     
     return y_true, y_pred_probs
 
+
+def make_custom_nlp(
+    disable=["ner"],
+    contractions=["don't", "can't", "couldn't", "you'd", "I'll"],
+    stopwords_to_add=[],
+    stopwords_to_remove=[],
+    spacy_model = "en_core_web_sm"
+):
+    """Returns a custom spacy nlp pipeline.
+    
+    Args:
+        disable (list, optional): Names of pipe components to disable. Defaults to ["ner"].
+        contractions (list, optional): List of contractions to add as special cases. Defaults to ["don't", "can't", "couldn't", "you'd", "I'll"].
+        stopwords_to_add(list, optional): List of words to set as stopwords (word.is_stop=True)
+        stopwords_to_remove(list, optional): List of words to remove from stopwords (word.is_stop=False)
+        spacy_model(string, optional): String to select a spacy language model. (Defaults to "en_core_web_sm".)
+                            Additional Options:  "en_core_web_md", "en_core_web_lg"; 
+                            (Must first download the model by name in the terminal:
+                            e.g.  "python -m spacy download en_core_web_lg" )
+            
+    Returns:
+        nlp pipeline: spacy pipeline with special cases and updated nlp.Default.stopwords
+    """
+    # Load the English NLP model
+    nlp = spacy.load(spacy_model, disable=disable)
+    
+    # Adding Special Cases 
+    # Loop through the contractions list and add special cases
+    for contraction in contractions:
+        special_case = [{"ORTH": contraction}]
+        nlp.tokenizer.add_special_case(contraction, special_case)
+    
+    # Adding stopwords
+    for word in stopwords_to_add:
+        # Set the is_stop attribute for the word in the vocab dict to true.
+        nlp.vocab[
+            word
+        ].is_stop = True  # this determines spacy's treatmean of the word as a stop word
+        # Add the word to the list of stopwords (for easily tracking stopwords)
+        nlp.Defaults.stop_words.add(word)
+    
+    # Removing Stopwords
+    for word in stopwords_to_remove:
+        
+        # Ensure the words are not recognized as stopwords
+        nlp.vocab[word].is_stop = False
+        nlp.Defaults.stop_words.discard(word)
+        
+    return nlp
+
+
+from pprint import pprint
+import tensorflow as tf
+import pandas as pd
+def make_text_vectorization_layer(train_ds,  max_tokens=None, 
+                                  split='whitespace',
+                                  standardize="lower_and_strip_punctuation",
+                                  output_mode="int",
+                                  output_sequence_length=None,
+                                  ngrams=None, pad_to_max_tokens=False,
+                                  verbose=True,
+                                  **kwargs,
+                                 ):
+    # Build the text vectorization layer
+    text_vectorizer = tf.keras.layers.TextVectorization(
+        max_tokens=max_tokens,
+        standardize=standardize, 
+        output_mode=output_mode,
+        output_sequence_length=output_sequence_length,
+        **kwargs
+    )
+    # Get just the text from the training data
+    if isinstance(train_ds, (np.ndarray, list, tuple, pd.Series)):
+        ds_texts = train_ds
+    else:
+        try:
+            ds_texts = train_ds.map(lambda x, y: x )
+        except:
+            ds_texts = train_ds
+            
+    # Fit the layer on the training texts
+    text_vectorizer.adapt(ds_texts)
+    
+    
+    if verbose:
+        # Print the params
+        print( "\ntf.keras.layers.TextVectorization(" )
+        config = text_vectorizer.get_config()
+        pprint(config,indent=4)
+        print(")")
+               
+    # SAVING VOCAB FOR LATER
+    # Getting list of vocab 
+    vocab = text_vectorizer.get_vocabulary()
+    # Save dictionaries to look up words from ints 
+    int_to_str  = {idx:word for idx, word in enumerate(vocab)}
+    
+    return text_vectorizer, int_to_str
+
+
+from tensorflow.keras import layers, optimizers, regularizers
+def build_bow_model(text_vectorization_layer, name=None):
+    # Build model with pre-trained text_vectorization layer
+    bow_model = tf.keras.models.Sequential([
+        text_vectorization_layer], name=name)
+   
+    # Add layers
+    bow_model.add(layers.Dense(32, activation='relu')),
+    # Output layers
+    bow_model.add(layers.Dense(len(classes), activation='softmax'))
+    # Compile model
+    bow_model.compile(
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        optimizer = optimizers.legacy.Adam(),
+        metrics=['accuracy']
+    )
+    
+    bow_model.summary()
+    return bow_model
+
